@@ -3,88 +3,52 @@ package com.example.cpsc471expensesubmitter;
 import android.content.Intent;
 import android.graphics.Bitmap;
 
-import android.net.Network;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.MediaStore;
-//import android.support.constraint.solver.Cache;
 import android.support.v7.app.AppCompatActivity;
+import android.util.Base64;
 import android.util.Log;
-import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.EditText;
-import android.widget.TextView;
+import android.widget.Toast;
 
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
 import com.android.volley.Response;
 import com.android.volley.VolleyError;
-import com.android.volley.toolbox.BasicNetwork;
-import com.android.volley.toolbox.DiskBasedCache;
-import com.android.volley.toolbox.HurlStack;
-import com.android.volley.toolbox.StringRequest;
+import com.android.volley.toolbox.JsonObjectRequest;
 import com.android.volley.toolbox.Volley;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedReader;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.util.Scanner;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
-
-//import android.widget.Toast;
-//android.permission.INTERNET;
-
-//public static final String INTERNET;
+import java.util.Calendar;
 
 public class MainActivity extends AppCompatActivity {
 
-//    private TextView mTextMessage;
-//
-//    private BottomNavigationView.OnNavigationItemSelectedListener mOnNavigationItemSelectedListener
-//            = new BottomNavigationView.OnNavigationItemSelectedListener() {
-//
-//        @Override
-//        public boolean onNavigationItemSelected(@NonNull MenuItem item) {
-//            Fragment selectedFragment = null;
-//            switch (item.getItemId()) {
-//                case R.id.navigation_home:
-//                    mTextMessage.setText(R.string.title_home);
-//                    return true;
-//                case R.id.navigation_newexpense:
-//                    mTextMessage.setText(R.string.title_newexpense);
-//                    return true;
-//                case R.id.navigation_account:
-//                    mTextMessage.setText(R.string.title_account);
-//                    return true;
-//            }
-//
-//            getSupportFragmentManager().beginTransaction().replace(R.id.fragment_container,
-//                    selectedFragment).commit();
-//
-//            return false;
-//        }
-//    };
 
+    String upload_URL = "http://10.13.153.65:8000/api/expense";
+    JSONObject jsonObject;
+    RequestQueue rQueue;
 
     ImageView imageView;
 
-    int expenseNumber;
+    String expenseNumber;
     String description;
 
 
     EditText expenseNumberInput;
     EditText descInput;
-
-    Button submitButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,9 +60,10 @@ public class MainActivity extends AppCompatActivity {
 //        navigation.setOnNavigationItemSelectedListener(mOnNavigationItemSelectedListener);
 
         // Camera button functionality
-        Button btnCamera = (Button) findViewById(R.id.btnCamera);
-        imageView = (ImageView) findViewById(R.id.imageView);
+        Button btnCamera = findViewById(R.id.btnCamera);
+        imageView = findViewById(R.id.imageView);
 
+        // Take photo when camera button is clicked
         btnCamera.setOnClickListener(new View.OnClickListener() {
             //@Nullable
 
@@ -110,18 +75,19 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Submit button functionality
-        expenseNumberInput = (EditText) findViewById(R.id.expenseCodeInput);
-        descInput = (EditText) findViewById(R.id.descInput);
+        expenseNumberInput = findViewById(R.id.expenseCodeInput);
+        descInput = findViewById(R.id.descInput);
 
-        Button subButton = (Button) findViewById(R.id.submitButton);
+        // Send data to server when submit button is hit
+        Button subButton = findViewById(R.id.submitButton);
         subButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 try {
-                    expenseNumber = Integer.valueOf(expenseNumberInput.getText().toString());
+                    expenseNumber = expenseNumberInput.getText().toString();
                 } catch (java.lang.NumberFormatException ex) {
-                    ;
-                } //TODO add error message?
+                    Log.d("EXPENSE_CODE", "Getting expense code error: " + ex);
+                }
 
                 description = descInput.getText().toString();
 
@@ -130,7 +96,7 @@ public class MainActivity extends AppCompatActivity {
                 //String s = null;
                 //s.split();
 
-                Log.d("CREATION", "Expensenumber is: " + expenseNumber);
+                Log.d("CREATION", "Expense number is: " + expenseNumber);
                 Log.d("CREATION", "Description is: " + description);
 
 
@@ -139,7 +105,9 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void run() {
                         try  {
-                            sendDataToServer(imageView, expenseNumber, description);
+                            new CallAPI().execute(upload_URL, expenseNumber + ";" + description);
+                            //sendDataToServer(expenseNumber, description);
+                            uploadImage();
                         } catch (Exception e) {
                             e.printStackTrace();
                         }
@@ -154,108 +122,57 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    Bitmap bitmap;
     // Puts image taken by user onto screen as preview
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        Bitmap bitmap = (Bitmap) data.getExtras().get("data");
+        bitmap = (Bitmap) data.getExtras().get("data");
         imageView.setImageBitmap(bitmap);
     }
 
-    private void sendDataToServer(ImageView imageView, int expenseNumber, String description) {
-        Log.d("POSTReq", "In sendDataToServer");
 
 
 
-        try{
-        URL url = new URL("http://httpbin.org/ip");
-        HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
-            Log.d("POSTreq", "Connection successful ");
+
+    public void uploadImage(){
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, byteArrayOutputStream);
+        String encodedImage = Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.DEFAULT);
         try {
-            InputStream in = new BufferedInputStream(urlConnection.getInputStream());
-                Log.d("POSTreq", "Inputstream successful ");
-            String response = readStream(in);
-                Log.d("POSTreq", "Reading inputstream successful ");
-            Log.d("POSTresp", "Response was: " + response);
-        } finally {
-            urlConnection.disconnect();
+            jsonObject = new JSONObject();
+            String imgname = String.valueOf(Calendar.getInstance().getTimeInMillis());
+            jsonObject.put("name", imgname);
+            //  Log.d("Image name", etxtUpload.getText().toString().trim());
+            jsonObject.put("image", encodedImage);
+            // jsonObject.put("aa", "aa");
+        } catch (JSONException e) {
+            Log.d("JSONerr", e.toString());
         }
-    } catch (Exception e) {Log.d("POSTresp", "Exception : " + e);}
-
-
-
-/*
-        RequestQueue requestQueue;
-
-
-// Instantiate the cache
-        DiskBasedCache cache = new DiskBasedCache(getCacheDir(), 1024 * 1024); // 1MB cap
-
-// Set up the network to use HttpURLConnection as the HTTP client.
-        BasicNetwork network = new BasicNetwork(new HurlStack());
-
-// Instantiate the RequestQueue with the cache and network.
-        requestQueue = new RequestQueue(cache, network);
-
-// Start the queue
-        requestQueue.start();
-
-        String url ="http://httpbin.org/ip";
-
-// Formulate the request and handle the response.
-        StringRequest stringRequest = new StringRequest(Request.Method.GET, url,
-                new Response.Listener<String>() {
+        JsonObjectRequest jsonObjectRequest = new JsonObjectRequest(Request.Method.POST, upload_URL, jsonObject,
+                new Response.Listener<JSONObject>() {
                     @Override
-                    public void onResponse(String response) {
-                        // Do something with the response
-                        Log.d("1stHTTPresp", "Response was: " + response);
-                    }
-                },
-                new Response.ErrorListener() {
-                    @Override
-                    public void onErrorResponse(VolleyError error) {
-                        // Handle error
-                        Log.d("1stHTTPresp", "No response");
-                    }
-                });
-
-// Add the request to the RequestQueue.
-        requestQueue.add(stringRequest);
-
-
-         beginning of request
-
-
-
-        // Instantiate the RequestQueue.
-        RequestQueue queue = Volley.newRequestQueue(this);
-        url ="http://httpbin.org/ip"; //TODO get URL from Richard
-        Log.d("POSTReq", "Sending request to " + url);
-
-        // Request a string response from the provided URL.
-        stringRequest = new StringRequest(Request.Method.GET, url,
-                new Response.Listener<String>() {
-                    @Override
-                    public void onResponse(String response) {
-                        // Display the first 500 characters of the response string.
-                        Log.d("HTTPresp", "Response was: " + response);
-                        //textView.setText("Response is: "+ response.substring(0,500)); //TODO add response to screen - popup?
+                    public void onResponse(JSONObject jsonObject) {
+                        Log.d("RESPONSE", jsonObject.toString());
+                        rQueue.getCache().clear();
+                        Toast.makeText(getApplication(), "Image Uploaded Successfully", Toast.LENGTH_SHORT).show();
                     }
                 }, new Response.ErrorListener() {
             @Override
-            public void onErrorResponse(VolleyError error) {
-                //textView.setText("That didn't work!"); //TODO add response to screen - popup?
-                Log.d("HTTPresp", "No response from request!!!");
+            public void onErrorResponse(VolleyError volleyError) {
+                Log.d("POSTerr", volleyError.toString());
+                Log.d("POSTerr", "Check if server running!");
             }
         });
 
-// Add the request to the RequestQueue.
-        queue.add(stringRequest);
+        rQueue = Volley.newRequestQueue(MainActivity.this);
+        rQueue.add(jsonObjectRequest);
 
     }
-    */
-    }
 
+        // Test readStream from InputStream for debugging
+    /*
         private String readStream (InputStream is){
             try {
                 ByteArrayOutputStream bo = new ByteArrayOutputStream();
@@ -271,40 +188,80 @@ public class MainActivity extends AppCompatActivity {
                 return "";
             }
         }
+    */
 
-    public String convert(InputStream inputStream) throws IOException {
+        // Old method of sending data to server
+    /*
+    private void sendDataToServer(String expenseNumber, String description) {
+        Log.d("POSTReq", "In sendDataToServer");
 
-
-
-
-        String readLine;
-        BufferedReader br = new BufferedReader(new InputStreamReader(inputStream));
-
-        while (((readLine = br.readLine()) != null)) {
-            Log.d("CONVERT", "String was: " + readLine);
-
+        try {
+            String data = expenseNumber + ";" + description; //This data will be sent to server
+            URL url = new URL(upload_URL);
+            URLConnection con = url.openConnection();
+            HttpURLConnection http = (HttpURLConnection) con;
+            http.setRequestMethod("POST"); // PUT is another valid option
+            http.setDoOutput(true);
+        } catch (Exception e) {
+            Log.d("SENDDATA", "Exception is " + e);
         }
+    */
+
+        // Test GET request for debugging
         /*
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        int nRead;
-        byte[] data = new byte[1024];
-        while ((nRead = inputStream.read(data, 0, data.length)) != -1) {
-            buffer.write(data, 0, nRead);
+        try{
+        URL url = new URL("http://httpbin.org/ip");
+        HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
+            Log.d("POSTreq", "Connection successful ");
+        try {
+            InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+                Log.d("POSTreq", "Inputstream successful ");
+            String response = readStream(in);
+                Log.d("POSTreq", "Reading inputstream successful ");
+            Log.d("POSTresp", "Response was: " + response);
+        } finally {
+            urlConnection.disconnect();
         }
+    } catch (Exception e) {Log.d("POSTresp", "Exception : " + e);}
+    */
 
-        buffer.flush();
-        byte[] byteArray = buffer.toByteArray();
 
-        String text = new String(byteArray, StandardCharsets.UTF_8);
-        Log.d("CONVERT", "String was: " + text);
-        return text;
-        */
+}
 
-        return null;
+// This sends the post request and expense and description data to the server
+class CallAPI extends AsyncTask<String, String, String> {
 
+    public CallAPI(){
+        //set context variables if required
     }
 
+    @Override
+    protected void onPreExecute() {
+        super.onPreExecute();
+    }
 
+    @Override
+    protected String doInBackground(String... params) {
+        String urlString = params[0]; // URL to call
+        String data = params[1]; //data to post
+        OutputStream out = null;
 
+        try {
+            URL url = new URL(urlString);
+            HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
+            out = new BufferedOutputStream(urlConnection.getOutputStream());
 
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out, "UTF-8"));
+            writer.write(data);
+            writer.flush();
+            writer.close();
+            out.close();
+
+            urlConnection.connect();
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+            return "Failure";
+        }
+        return "Success";
+    }
 }

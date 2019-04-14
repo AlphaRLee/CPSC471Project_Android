@@ -91,14 +91,8 @@ public class MainActivity extends AppCompatActivity {
 
                 description = descInput.getText().toString();
 
-
-                // TODO: add in POST request functionality
-                //String s = null;
-                //s.split();
-
                 Log.d("CREATION", "Expense number is: " + expenseNumber);
                 Log.d("CREATION", "Description is: " + description);
-
 
                 Thread thread = new Thread(new Runnable() {
 
